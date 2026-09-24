@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>提示词助手</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body data-edge="right" data-theme="light">
+  <!-- 屏幕边缘悬浮把手：悬停展开 / 可拖动定位 -->
+  <div id="handle" title="按住 Ctrl 移上来再拖动 = 调整位置 · 单击 = 展开/收起 · 悬停停留 = 自动展开">
+    <span class="grip"></span><span class="grip"></span><span class="grip"></span>
+  </div>
+
+  <!-- 吸附面板 -->
+  <div id="panel">
+    <header>
+      <div class="brand">
+        <span class="logo"><svg viewBox="0 0 24 24" width="20" height="20"><path fill="url(#lg1)" d="M12 2l2.4 7.6L22 12l-7.6 2.4L12 22l-2.4-7.6L2 12l7.6-2.4L12 2z"/><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c6cf6"/><stop offset="1" stop-color="#4f8cff"/></linearGradient></defs></svg></span>
+        <div class="bt">
+          <div class="t1">提示词助手 <span class="badge">本地版</span></div>
+          <div class="t2">让好创意，更好发生</div>
+        </div>
+      </div>
+      <div class="acts">
+        <button id="btnSync" class="ibtn" title="立即同步">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v4h-4"/></svg>
+        </button>
+        <button id="btnPin" class="ibtn" title="固定展开（不随鼠标收回）">
+          <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M14 2l8 8-2.5.6-3.4 3.4.3 5-2.1 2.1-4.3-4.3-5.6 5.6-1.4-1.4 5.6-5.6-4.3-4.3 2.1-2.1 5 .3 3.4-3.4L14 2z"/></svg>
+        </button>
+        <button id="btnSettings" class="ibtn" title="设置">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <button id="btnCollapse" class="ibtn" title="收起面板">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="searchbox">
+      <svg viewBox="0 0 24 24" width="15" height="15"><path fill="currentColor" d="M15.5 14h-.8l-.3-.3a6.5 6.5 0 1 0-.7.7l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>
+      <input id="search" type="text" placeholder="搜索提示词、风格、场景、标签…" />
+    </div>
+
+    <nav id="tabRow" class="tabrow"></nav>
+    <div id="subRow" class="chiprow"></div>
+    <div id="sortRow" class="chiprow sortrow"></div>
+
+    <div id="list" class="list"></div>
+
+    <footer class="statusbar">
+      <span id="syncInfo" class="sync"></span>
+    </footer>
+  </div>
+
+  <!-- 应用内放大预览：媒体在上，提示词全文滚动框在下 -->
+  <div id="lightbox" class="lightbox hidden">
+    <div class="lbmedia">
+      <img id="lbImg" alt="" />
+      <video id="lbVideo" class="lbmedia-hidden" controls playsinline></video>
+    </div>
+    <div class="lbinfo">
+      <div class="lbhead">
+        <span id="lbTitle"></span>
+        <span class="lbacts">
+          <button id="lbCopy" class="lbbtn primary" title="复制提示词全文">
+            <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M5 2a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H5Zm0 1.4h6c.3 0 .6.3.6.6v7c0 .3-.3.6-.6.6H5a.6.6 0 0 1-.6-.6V4c0-.3.3-.6.6-.6ZM2.4 4H2a1 1 0 0 0-1 1v8a2 2 0 0 0 2 2h7a1 1 0 0 0 1-1v-.4H3A.6.6 0 0 1 2.4 13V4Z"/></svg>
+            直接复制
+          </button>
+          <button id="lbLink" class="lbbtn" title="跳转到原链接">
+            <svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M6.2 9.8a3.4 3.4 0 0 1 0-4.8l2.4-2.4a3.4 3.4 0 0 1 4.8 4.8l-1.2 1.2-1-1 1.2-1.2a2 2 0 0 0-2.8-2.8L7.2 6a2 2 0 0 0 0 2.8l-1 1Zm3.6-3.6a3.4 3.4 0 0 1 0 4.8l-2.4 2.4a3.4 3.4 0 0 1-4.8-4.8l1.2-1.2 1 1-1.2 1.2a2 2 0 0 0 2.8 2.8L8.8 10a2 2 0 0 0 0-2.8l1-1Z"/></svg>
+            原链接
+          </button>
+          <button id="lbClose" class="lbbtn icon" title="关闭（Esc）">✕</button>
+        </span>
+      </div>
+      <div id="lbText" class="lbtext"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="panel.js"></script>
+</body>
+</html>

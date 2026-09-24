@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>提示词助手 · 设置</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <aside class="side">
+    <div class="logo"><span class="dot"></span>提示词助手</div>
+    <nav>
+      <button class="nav on" data-tab="source">数据源</button>
+      <button class="nav" data-tab="prompt">提示词</button>
+      <button class="nav" data-tab="phrase">常用句</button>
+      <button class="nav" data-tab="look">外观与行为</button>
+      <button class="nav" data-tab="guide">使用说明</button>
+    </nav>
+    <div class="sidefoot" id="syncInfo"></div>
+  </aside>
+
+  <main>
+    <!-- 数据源 -->
+    <section id="tab-source" class="tab on">
+      <h2>飞书多维表数据源</h2>
+      <p class="hint">数据通过本机已登录的 lark-cli 读取（零配置）；修改多维表后点「立即同步」即可更新。</p>
+      <div class="row"><label>多维表链接</label><input id="baseUrl" class="wide" placeholder="https://xxx.feishu.cn/base/..." /><button id="btnParse" class="btn">解析</button></div>
+      <div class="row"><label>lark-cli 路径</label><input id="larkCliPath" class="mid" /><label class="mini">身份</label>
+        <select id="identity"><option value="user">user（我的账号）</option><option value="bot">bot（应用）</option></select>
+        <button id="btnTest" class="btn">测试连接</button>
+        <button id="btnEnv" class="btn primary">环境自检</button>
+        <span id="testMsg" class="msg"></span>
+      </div>
+
+      <h3>同步的数据表</h3>
+      <div id="srcList"></div>
+      <div class="row"><button id="btnAddSrc" class="btn ghost">＋ 添加数据表</button></div>
+
+      <h3>同步策略</h3>
+      <div class="row"><label>自动同步</label>
+        <select id="autoMinutes">
+          <option value="0">关闭（仅手动）</option><option value="10">每 10 分钟</option>
+          <option value="30">每 30 分钟</option><option value="60">每 1 小时</option>
+        </select>
+        <button id="btnSync" class="btn primary">立即同步</button><span id="syncMsg" class="msg"></span>
+      </div>
+    </section>
+
+    <!-- 提示词 -->
+    <section id="tab-prompt" class="tab">
+      <div class="toolbar">
+        <h2>提示词</h2>
+        <input id="pSearch" class="search" placeholder="搜索…" />
+        <span id="statsInfo" class="msg"></span>
+        <button id="btnClearStats" class="btn sm">清空复制统计</button>
+        <button id="btnAddPrompt" class="btn primary">＋ 新建本地提示词</button>
+      </div>
+      <p class="hint">飞书来源的提示词请在多维表中编辑；此处可设为「常用」（显示在托盘右键菜单）、复制，或新建仅存本地的提示词。</p>
+      <div id="promptList" class="rows"></div>
+    </section>
+
+    <!-- 常用句 -->
+    <section id="tab-phrase" class="tab">
+      <div class="toolbar">
+        <h2>常用句</h2>
+        <button id="btnAddPhrase" class="btn primary">＋ 新建常用句</button>
+      </div>
+      <p class="hint">短文本快捷复制项，保存在本地；设为常用后也会出现在托盘右键菜单。</p>
+      <div id="phraseList" class="rows"></div>
+    </section>
+
+    <!-- 外观 -->
+    <section id="tab-look" class="tab">
+      <h2>外观与行为</h2>
+      <div class="row"><label>主题</label><select id="theme"><option value="light">浅色</option><option value="dark">深色</option></select></div>
+      <div class="row"><label>主题色</label><input id="accent" type="color" /></div>
+      <div class="row"><label>吸附边</label><select id="edge"><option value="right">屏幕右侧</option><option value="top">屏幕顶部</option></select></div>
+      <div class="row"><label>面板宽度</label><input id="width" type="range" min="320" max="560" step="8" /><span id="widthVal" class="val"></span></div>
+      <div class="row"><label>预览行数</label><select id="previewLines"><option value="1">1 行</option><option value="2">2 行</option><option value="3">3 行</option></select></div>
+      <div class="row"><label>收回延时</label><input id="collapseMs" type="range" min="200" max="1500" step="50" /><span id="collapseVal" class="val"></span></div>
+      <div class="row"><label class="ck"><input id="cardImage" type="checkbox" /> 卡片显示效果预览图</label></div>
+      <div class="row"><label class="ck"><input id="copyToast" type="checkbox" /> 复制后显示提示</label></div>
+      <div class="row"><label class="ck"><input id="mediaPersist" type="checkbox" /> 预览图/视频缓存到磁盘（关闭=无痕：临时目录存放，退出自动清空）</label></div>
+      <div class="row"><label>缓存位置</label><input id="mediaDir" class="mid" placeholder="默认：安装目录\cache\media" /><button id="btnPickDir" class="btn">更改…</button><button id="btnClearCache" class="btn sm">清空缓存</button><span id="cacheMsg" class="msg"></span></div>
+      <p class="hint">预览图与视频下载存放的目录，可改到任意盘（如 D:\缓存）。留空时 Windows 用安装目录下的 cache\media，mac 用应用缓存目录。</p>
+      <div class="row"><label class="ck"><input id="launchAtLogin" type="checkbox" /> 开机自动启动</label></div>
+    </section>
+
+    <!-- 使用说明 -->
+    <section id="tab-guide" class="tab guide">
+      <h2>使用说明</h2>
+
+      <h3>一、这套工具是做什么的</h3>
+      <p><b>提示词助手</b>是你的「提示词速查台」：把飞书多维表里积累的提示词、参考图、视频素材同步到电脑托盘，
+      随时一键复制、随时预览，不用再来回翻表格。</p>
+      <pre class="flow">浏览器剪藏插件 ──存──▶ 飞书多维表（数据中台） ──同步──▶ 提示词助手（托盘/面板 取用·复制·预览）</pre>
+
+      <h3>二、配套：浏览器剪藏插件（负责“存”）</h3>
+      <p>剪藏插件是一个浏览器扩展：平时浏览网页（社交平台、灵感站、作品站）时，遇到喜欢的图文提示词、封面图、视频，
+      点一下插件即可存入<b>你自己的飞书多维表</b>，可选择封面、微调提示词、打上分类标签。</p>
+      <ol>
+        <li>安装：下载插件包解压 → 浏览器「扩展程序」页 → 「加载已解压的扩展程序」→ 选中解压文件夹；</li>
+        <li>准备多维表：打开「网页剪藏库」模板 → <b>先创建副本到自己空间</b>（复制范围选“仅结构”）；</li>
+        <li>配置机器人：飞书开放平台创建企业自建应用 → 开通 bitable 相关权限并发布 → 在你的多维表「添加文档应用」中设为可编辑；</li>
+        <li>插件写入哪张表，本工具就同步哪张表（表名含「提示词」的表自动接入）。</li>
+      </ol>
+      <p><button id="btnGuideDoc" class="btn primary docbtn">点击查看剪藏插件下载和使用详细说明 ↗</button></p>
+
+      <h3>三、本工具怎么用（负责“用”）</h3>
+      <ol>
+        <li><b>首次使用</b>：设置 → 数据源 → 「环境自检」补齐依赖（可一键安装 lark-cli、跳转飞书登录）；</li>
+        <li><b>接入数据</b>：粘贴你的飞书多维表链接 → 解析 → 立即同步；字段映射自动识别，一般无需手工配置；</li>
+        <li><b>日常取用</b>：
+          <ul>
+            <li>鼠标移到<b>屏幕右缘悬浮把手</b>上 → 面板滑出；移开自动收回，不打扰工作；</li>
+            <li>两级分类浏览：大类（常用词 / 生图词 / 视频词 / 高频）→ 细分（人物 / 环境 / …）；</li>
+            <li>点击卡片 = 复制提示词全文；点击封面图 = 放大预览；点击视频 ▶ = 内联播放；</li>
+            <li><b>右键托盘图标</b> = 常用提示词菜单，点击即复制；左键托盘 = 固定展开面板；</li>
+            <li>卡片 ★ = 加入「常用词」：同步出现在面板常用句页与托盘右键菜单；</li>
+            <li>每次复制自动计数，「高频」分类按使用次数排序，方便复盘自己的常用库。</li>
+          </ul>
+        </li>
+        <li><b>进阶</b>：设置页可管理数据源与字段映射、新建本地提示词/常用句、切换主题与吸附边（右/顶）、
+        调整面板宽度与预览行数、更改媒体缓存位置或开启无痕模式。</li>
+      </ol>
+
+      <h3>四、数据都存在哪里</h3>
+      <ul>
+        <li>提示词/图片/视频原文：你的飞书多维表（唯一数据源，本工具只读同步）；</li>
+        <li>设置、加星、复制统计：本机系统应用数据目录（不随安装包分发）；</li>
+        <li>预览图/视频缓存：默认安装目录 cache\media（mac 为应用缓存目录），可在「外观与行为」更改或清空。</li>
+      </ul>
+    </section>
+  </main>
+
+  <!-- 环境自检弹窗 -->
+  <div id="envDlg" class="dlg hidden">
+    <div class="dlgbox" style="width:560px">
+      <h3>环境自检</h3>
+      <p class="hint">换电脑或首次使用时点一遍：缺什么按对应按钮补什么。</p>
+      <div id="envRows"></div>
+      <span id="envMsg" class="msg"></span>
+      <div class="dlgoods">
+        <span class="sp"></span>
+        <button id="btnEnvClose" class="btn">关闭</button>
+        <button id="btnEnvRe" class="btn primary">重新检查</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 本地条目编辑弹窗 -->
+  <div id="dlg" class="dlg hidden">
+    <div class="dlgbox">
+      <h3 id="dlgTitle">编辑</h3>
+      <label class="fl">标题 / 名称</label><input id="fTitle" class="wide" />
+      <label class="fl">标签（逗号分隔）</label><input id="fTags" class="wide" placeholder="人物设定, 视频生成" />
+      <label class="fl">内容（复制时使用的文本）</label><textarea id="fContent" rows="7"></textarea>
+      <label class="ck"><input id="fPinned" type="checkbox" /> 设为常用（托盘右键菜单）</label>
+      <div class="dlgoods">
+        <button id="btnDel" class="btn danger hidden">删除</button>
+        <span class="sp"></span>
+        <button id="btnCancel" class="btn">取消</button>
+        <button id="btnSave" class="btn primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+</body>
+</html>

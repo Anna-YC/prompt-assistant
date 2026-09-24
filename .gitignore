@@ -1,0 +1,16 @@
+# 依赖与构建产物
+node_modules/
+dist/
+
+# 运行时个人数据（缓存的封面/视频、日志）
+cache/
+app.log
+*.log
+
+# 系统/编辑器垃圾
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 本地调试脚本
+/tmp-*.js

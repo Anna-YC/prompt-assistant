@@ -1,0 +1,61 @@
+{
+  "name": "prompt-assistant",
+  "productName": "提示词助手",
+  "version": "1.7.0",
+  "description": "常驻托盘的提示词速查/复制助手，数据来自飞书多维表",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "gen-icon": "node tools/gen-icon.js",
+    "dist": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.promptassistant.tray",
+    "productName": "提示词助手",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "src/**/*",
+      "assets/**/*",
+      "package.json",
+      "!cache/**",
+      "!dist/**",
+      "!tools/**",
+      "!app.log",
+      "!start.bat",
+      "!启动提示词助手.vbs",
+      "!data-test-imgs/**"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "language": "2052",
+      "shortcutName": "提示词助手",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false
+    }
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.15.3"
+  }
+}

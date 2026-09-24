@@ -316,6 +316,17 @@ async function syncAll() {
       try {
         const items = await feishu.syncSource(cfg, src, mediaBaseDir(), () => {});
         log('sync source', src.name, '->', items.length, 'items');
+        // 磁盘已有的媒体直接挂本地路径：重启后首屏即显，不必重新解析
+        for (const it of items) {
+          for (const [role, key] of [['img', 'image'], ['vid', 'video']]) {
+            const m = it[key];
+            if (m && m.fileToken && !m.localPath) {
+              const ext = path.extname(m.name || '') || (role === 'vid' ? '.mp4' : '.png');
+              const f = resolveMediaFile(`${it.tableId}_${it.recordId}_${role}${ext}`);
+              if (f && fs.statSync(f).size > 0) m.localPath = f;
+            }
+          }
+        }
         if (src.kind === 'phrase') {
           for (const it of items) phrases.push({ id: it.id, name: it.title, content: it.content || it.title, origin: 'feishu' });
         } else {
@@ -446,12 +457,23 @@ function ensureMediaDir() {
 }
 const mediaQueue = [];
 let mediaActive = 0;
+let cacheSaveTimer = null;
+// 把“文件已在磁盘”的信息写进 cache.json：重启后无需重新解析/下载，直接秒显
+function rememberMediaPath(tableId, recordId, role, localPath) {
+  const list = store.cache.prompts || [];
+  const it = list.find((x) => x.tableId === tableId && x.recordId === recordId);
+  if (!it) return;
+  if (role === 'video') { it.video = it.video || {}; it.video.localPath = localPath; }
+  else { it.image = it.image || {}; it.image.localPath = localPath; }
+  if (cacheSaveTimer) clearTimeout(cacheSaveTimer);
+  cacheSaveTimer = setTimeout(() => { cacheSaveTimer = null; try { store.saveCache(); } catch {} }, 1500);
+}
 function pumpMedia() {
   while (mediaActive < 2 && mediaQueue.length) {
     const job = mediaQueue.shift();
     mediaActive++;
     job.run()
-      .then(() => { log('media ok ->', path.basename(job.dest)); job.res({ localPath: job.dest }); })
+      .then(() => { log('media ok ->', path.basename(job.dest)); rememberMediaPath(job.tableId, job.recordId, job.role, job.dest); job.res({ localPath: job.dest }); })
       .catch((e) => { log('media FAIL', path.basename(job.dest), ':', String(e.message || e).slice(0, 200)); job.res({ error: String(e.message || e) }); })
       .finally(() => { mediaActive--; pumpMedia(); });
   }
@@ -460,12 +482,18 @@ function ensureMedia({ tableId, recordId, fileToken, name, role }) {
   const ext = path.extname(name || '') || (role === 'video' ? '.mp4' : '.png');
   const fname = `${tableId}_${recordId}_${role === 'video' ? 'vid' : 'img'}${ext}`;
   const existing = resolveMediaFile(fname);
-  if (existing && fs.statSync(existing).size > 0) return Promise.resolve({ localPath: existing });
+  if (existing && fs.statSync(existing).size > 0) {
+    rememberMediaPath(tableId, recordId, role === 'video' ? 'video' : 'image', existing);
+    return Promise.resolve({ localPath: existing });
+  }
   const dest = path.join(ensureMediaDir(), fname);
   log('media ensure queued:', role, path.basename(dest));
   return new Promise((res) => {
     mediaQueue.push({
       dest,
+      tableId,
+      recordId,
+      role: role === 'video' ? 'video' : 'image',
       res,
       run: () => feishu.downloadAttachment(store.config, { tableId, recordId, fileToken, destPath: dest }),
     });
@@ -661,6 +689,21 @@ if (!gotLock) {
     registerLocalProtocol();
     registerIpc();
     feishu.probeSystemNode(); // 预热：后续 lark-cli 子进程优先用系统 node，避免任何弹窗
+    // 启动预解析：磁盘已有媒体直接挂本地路径（修复重启后图片需重新加载）
+    try {
+      let n = 0;
+      for (const it of (store.cache.prompts || [])) {
+        for (const [role, key] of [['img', 'image'], ['vid', 'video']]) {
+          const m = it[key];
+          if (m && m.fileToken && !m.localPath) {
+            const ext = path.extname(m.name || '') || (role === 'vid' ? '.mp4' : '.png');
+            const f = resolveMediaFile(`${it.tableId}_${it.recordId}_${role}${ext}`);
+            if (f && fs.statSync(f).size > 0) { m.localPath = f; n++; }
+          }
+        }
+      }
+      if (n) { store.saveCache(); log('startup media relink:', n); }
+    } catch {}
 
     if (store.config.behavior && store.config.behavior.launchAtLogin) applyLoginItem(); // 自愈历史坏条目（未加引号）
     createTray();

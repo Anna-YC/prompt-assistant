@@ -412,7 +412,17 @@ function bind() {
     const el = $('#list');
     if (el.scrollTop + el.clientHeight > el.scrollHeight - 400) appendChunk(false);
   });
-  $('#search').addEventListener('input', (e) => { query = e.target.value; renderList(); });
+  // 搜索：debounce，避免每敲一个字就重建整列表 DOM（539 条时尤其明显）
+  let searchTimer = null;
+  $('#search').addEventListener('input', (e) => {
+    const v = e.target.value;
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      searchTimer = null;
+      query = v;
+      renderList();
+    }, 140);
+  });
   $('#tabRow').addEventListener('click', (e) => {
     const t = e.target.closest('.tab');
     if (!t) return;

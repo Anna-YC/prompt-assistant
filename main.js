@@ -20,12 +20,31 @@ let panelSticky = false; // 托盘左键打开时为“固定展开”，不随�
 
 const isDev = !app.isPackaged;
 
+// 日志上限：超过就滚成 app.log.1，避免长期运行把日志写成一个巨大的文件。
+// 记录累计大小比每次 statSync 便宜；进程重启后重新按实际文件大小初始化。
+const LOG_MAX = 2 * 1024 * 1024;
+let logBytes = null;
+function logPath() { return path.join(app.getPath('userData'), 'app.log'); }
+function rotateLogIfNeeded() {
+  if (logBytes === null) {
+    try { logBytes = fs.statSync(logPath()).size; } catch { logBytes = 0; }
+  }
+  if (logBytes <= LOG_MAX) return;
+  try {
+    fs.rmSync(logPath() + '.1', { force: true });
+    fs.renameSync(logPath(), logPath() + '.1');
+  } catch {}
+  logBytes = 0;
+}
 function log(...a) {
   const line = '[prompt-assistant] ' + a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ');
   console.log(line);
   // 日志写入用户数据目录（AppData），安装目录不留任何个人痕迹
   try {
-    fs.appendFileSync(path.join(app.getPath('userData'), 'app.log'), new Date().toISOString() + ' ' + line + '\n');
+    rotateLogIfNeeded();
+    const text = new Date().toISOString() + ' ' + line + '\n';
+    fs.appendFileSync(logPath(), text);
+    logBytes += Buffer.byteLength(text);
   } catch {}
 }
 
@@ -259,7 +278,9 @@ function openSettings() {
 function copyText(text, label, id) {
   clipboard.writeText(String(text == null ? '' : text));
   if (id) {
-    // 复制统计：高频使用词库；增量推送，避免整表重渲染丢滚动位置
+    // 复制统计：只推增量。
+    // 这里以前还调了 broadcastData()，等于把整表重新下发、渲染进程整列表重渲染，
+    // 结果就是每点一下复制，列表滚动位置被重置回顶部。
     store.recordCopy(id);
     const payload = { id, count: store.copyCountOf(id) };
     sendPanel('stats:updated', payload);
@@ -283,6 +304,47 @@ function applyLoginItem() {
 }
 
 // ---------------- 同步 ----------------
+// ---------------- 同步结果合并 ----------------
+// 把「本轮各源的新结果」与「上一轮缓存」合并，返回最终要落盘的 prompts / phrases。
+// 规则：
+//   · 本轮成功的源  → 用新数据（即使新数据是 0 条，也尊重这个事实）
+//   · 本轮失败的源  → 沿用上一轮旧数据，绝不能被空数组覆盖
+//   · 未启用 / 已从配置移除的源 → 不再收录
+// prompts 的 sourceId 可靠（mapRecord 写入，且 id 前缀就是源 id，可兜底）。
+function prevSourceIdOf(item) {
+  if (item && item.sourceId) return item.sourceId;
+  const m = /^([^:]+):/.exec(String((item && item.id) || ''));
+  return m ? m[1] : '';
+}
+// 参数全部显式传入，不读闭包：这段合并逻辑要能脱离 syncAll 单独验证。
+function mergeSyncResult({ sources, syncedSourceIds, prevPrompts, prevPhrases, freshFor }) {
+  const okPrompts = [];
+  const okPhrases = [];
+  for (const src of sources || []) {
+    if (!src.enabled || !syncedSourceIds.has(src.id)) continue; // 本轮失败的源在这里被跳过
+    const fresh = freshFor(src);
+    if (src.kind === 'phrase') okPhrases.push(...fresh);
+    else okPrompts.push(...fresh);
+  }
+
+  // 两套缓存用同一条规则：本轮成功的源换成新数据，失败的源沿用旧数据。
+  // 归属优先看 sourceId，老数据没有就退回 id 前缀（id 形如 `${sourceId}:${recordId}`）。
+  // 归属不明的条目一律保留 —— 宁可多留一条，也不误删用户的数据。
+  const staleOf = (prevList) => prevList.filter((it) => {
+    const sid = prevSourceIdOf(it);
+    if (!sid) return true;
+    const cfgSrc = (sources || []).find((s) => s.id === sid);
+    if (!cfgSrc || !cfgSrc.enabled) return false; // 源已移除或停用
+    return !syncedSourceIds.has(sid);             // 只保留本轮失败的源
+  });
+
+  return {
+    prompts: [...okPrompts, ...staleOf(prevPrompts)],
+    phrases: [...okPhrases, ...staleOf(prevPhrases)],
+    carriedOver: staleOf(prevPrompts).length + staleOf(prevPhrases).length,
+  };
+}
+
 async function syncAll() {
   if (syncing) return { ok: false, error: '正在同步中' };
   log('syncAll start, sources =', (store.config.sources || []).length);
@@ -290,6 +352,10 @@ async function syncAll() {
   notifySyncState();
   const cfg = store.config;
   const errors = [];
+  const prevPrompts = store.cache.prompts || [];
+  const prevPhrases = store.cache.phrases || [];
+  // 本轮成功同步的源 id 集合：mergeSyncResult 据此决定哪些源沿用旧数据
+  const syncedSourceIds = new Set();
   try {
     const prompts = [];
     const phrases = [];
@@ -328,17 +394,29 @@ async function syncAll() {
           }
         }
         if (src.kind === 'phrase') {
-          for (const it of items) phrases.push({ id: it.id, name: it.title, content: it.content || it.title, origin: 'feishu' });
+          // 带上 sourceId：合并时要能逐条归属到源，否则 phrase 源一失败就无从区分
+          for (const it of items) phrases.push({ id: it.id, sourceId: prevSourceIdOf(it), name: it.title, content: it.content || it.title, origin: 'feishu' });
         } else {
           prompts.push(...items);
         }
+        syncedSourceIds.add(src.id); // 只有真正跑完的源才记成功
       } catch (e) {
         log('sync source FAILED', src.name, ':', e.message);
         errors.push(`${src.name}: ${e.message}`);
       }
     }
-    store.cache.prompts = prompts;
-    store.cache.phrases = phrases;
+    // 逐源合并：成功的源用新数据，失败的源沿用上一轮缓存。
+    // 归属一律按条目的 sourceId，不看 src.kind —— 表里装的是提示词却被标成
+    // phrase 源时，按 kind 归类会让这些条目落在 phrases 里再被丢掉。
+    const merged = mergeSyncResult({
+      sources: cfg.sources,
+      syncedSourceIds,
+      prevPrompts,
+      prevPhrases,
+      freshFor: (src) => (src.kind === 'phrase' ? [] : prompts.filter((p) => prevSourceIdOf(p) === src.id)),
+    });
+    store.cache.prompts = merged.prompts;
+    store.cache.phrases = merged.phrases;
     store.cache.lastSyncAt = Date.now();
     store.config.sync.lastSyncAt = Date.now();
     store.config.sync.lastError = errors.join(' | ');
@@ -382,26 +460,33 @@ function scheduleAutoSync() {
 
 // ---------------- 本地媒体协议（支持 Range，视频可拖动进度） ----------------
 const MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
+// 媒体文件名白名单：形如 tblXXX_recYYY_img.jpg / ..._vid.mp4。
+// resolveMediaFile 内部用 path.basename 已经挡住了目录穿越，但那是副作用、不明显；
+// 这里显式拒绝任何含路径分隔符、上跳或特殊字符的请求，把安全边界写死。
+const MEDIA_NAME_RE = /^[A-Za-z0-9_\-.]+\.(png|jpe?g|gif|webp|mp4|m4v|mov|webm)$/i;
 function registerLocalProtocol() {
   protocol.handle('localimg', (req) => {
     try {
       const u = new URL(req.url);
       const rel = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+      if (!MEDIA_NAME_RE.test(rel)) return new Response('', { status: 404 });
       const file = resolveMediaFile(rel);
       if (!file) return new Response('', { status: 404 });
       const stat = fs.statSync(file);
       const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+      const baseHeaders = { 'X-Content-Type-Options': 'nosniff' };
       const range = req.headers.get('range');
       if (range) {
         const m = /bytes=(\d*)-(\d*)/.exec(range);
         const start = m && m[1] ? parseInt(m[1], 10) : 0;
         const end = m && m[2] ? Math.min(parseInt(m[2], 10), stat.size - 1) : stat.size - 1;
         if (!m || start > end || start >= stat.size) {
-          return new Response('', { status: 416, headers: { 'Content-Range': `bytes */${stat.size}` } });
+          return new Response('', { status: 416, headers: { ...baseHeaders, 'Content-Range': `bytes */${stat.size}` } });
         }
         return new Response(Readable.toWeb(fs.createReadStream(file, { start, end })), {
           status: 206,
           headers: {
+            ...baseHeaders,
             'Content-Range': `bytes ${start}-${end}/${stat.size}`,
             'Accept-Ranges': 'bytes',
             'Content-Length': String(end - start + 1),
@@ -410,7 +495,7 @@ function registerLocalProtocol() {
         });
       }
       return new Response(Readable.toWeb(fs.createReadStream(file)), {
-        headers: { 'Content-Length': String(stat.size), 'Content-Type': type, 'Accept-Ranges': 'bytes' },
+        headers: { ...baseHeaders, 'Content-Length': String(stat.size), 'Content-Type': type, 'Accept-Ranges': 'bytes' },
       });
     } catch {
       return new Response('', { status: 500 });
@@ -666,6 +751,9 @@ function registerIpc() {
 }
 
 function applyConfigSideEffects(patch) {
+  if (patch.larkCliPath !== undefined || patch.identity !== undefined) {
+    feishu.invalidateCliCache(); // 路径/身份变了，重解析，不必重启
+  }
   if (patch.panel) {
     if (patch.panel.edge !== undefined && patch.panel.edge !== panelEdgeCreated) recreatePanelWindow();
     else repositionPanel();

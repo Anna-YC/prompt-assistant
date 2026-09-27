@@ -17,6 +17,7 @@ let syncTimer = null;
 let syncing = false;
 let panelExpanded = false;
 let panelSticky = false; // 托盘左键打开时为“固定展开”，不随鼠标离开收回
+let ctrlHover = false; // panel:ctrlHover 上报的 Ctrl 悬停状态（当前仅记录未消费；需先声明，strict 模式下直接赋值会抛错）
 
 const isDev = !app.isPackaged;
 
@@ -406,14 +407,14 @@ async function syncAll() {
       }
     }
     // 逐源合并：成功的源用新数据，失败的源沿用上一轮缓存。
-    // 归属一律按条目的 sourceId，不看 src.kind —— 表里装的是提示词却被标成
-    // phrase 源时，按 kind 归类会让这些条目落在 phrases 里再被丢掉。
+    // freshFor 按 src.kind 取对应的新数据数组（上面循环已按 kind 分桶），
+    // 再按条目 sourceId 过滤出属于该源的部分。
     const merged = mergeSyncResult({
       sources: cfg.sources,
       syncedSourceIds,
       prevPrompts,
       prevPhrases,
-      freshFor: (src) => (src.kind === 'phrase' ? [] : prompts.filter((p) => prevSourceIdOf(p) === src.id)),
+      freshFor: (src) => (src.kind === 'phrase' ? phrases : prompts).filter((p) => prevSourceIdOf(p) === src.id),
     });
     store.cache.prompts = merged.prompts;
     store.cache.phrases = merged.phrases;
@@ -689,6 +690,15 @@ function registerIpc() {
         }
       } catch {}
     }
+    // 同步清掉 cache.json 里的 localPath 引用并广播：否则卡片仍按旧路径渲染，
+    // 裂图且因 data-loaded 标记不再触发懒加载，要到下次同步才自愈
+    let stripped = false;
+    for (const it of store.cache.prompts || []) {
+      if (it.image && it.image.localPath) { delete it.image.localPath; stripped = true; }
+      if (it.video && it.video.localPath) { delete it.video.localPath; stripped = true; }
+    }
+    if (stripped) { try { store.saveCache(); } catch {} }
+    broadcastData();
     return { ok: true, count: n };
   });
   h('pin:toggle', (id) => { const r = store.togglePin(id); broadcastData(); return r; });
@@ -779,18 +789,22 @@ if (!gotLock) {
     feishu.probeSystemNode(); // 预热：后续 lark-cli 子进程优先用系统 node，避免任何弹窗
     // 启动预解析：磁盘已有媒体直接挂本地路径（修复重启后图片需重新加载）
     try {
-      let n = 0;
+      let n = 0, stale = 0;
       for (const it of (store.cache.prompts || [])) {
         for (const [role, key] of [['img', 'image'], ['vid', 'video']]) {
           const m = it[key];
-          if (m && m.fileToken && !m.localPath) {
+          if (!m) continue;
+          // localPath 已失效（清空媒体缓存 / 无痕模式退出时清空临时目录）：
+          // 置空走按需重下，否则裂图会跨重启存活到下次同步
+          if (m.localPath && !fs.existsSync(m.localPath)) { delete m.localPath; stale++; }
+          if (m.fileToken && !m.localPath) {
             const ext = path.extname(m.name || '') || (role === 'vid' ? '.mp4' : '.png');
             const f = resolveMediaFile(`${it.tableId}_${it.recordId}_${role}${ext}`);
             if (f && fs.statSync(f).size > 0) { m.localPath = f; n++; }
           }
         }
       }
-      if (n) { store.saveCache(); log('startup media relink:', n); }
+      if (n || stale) { store.saveCache(); log('startup media relink:', n, 'stale dropped:', stale); }
     } catch {}
 
     if (store.config.behavior && store.config.behavior.launchAtLogin) applyLoginItem(); // 自愈历史坏条目（未加引号）

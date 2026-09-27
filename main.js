@@ -526,7 +526,18 @@ function mediaDirs() {
   const dirs = [];
   if (store && store.config.behavior.mediaPersist === false) dirs.push(mediaTmpDir());
   dirs.push(mediaBaseDir());
-  if (store) dirs.push(store.imgDir); // 兼容旧缓存位置
+  if (store) {
+    dirs.push(store.imgDir); // 兼容旧缓存位置
+    // 渲染进程只按 basename 请求 localimg://，由 resolveMediaFile 在这些目录里找。
+    // 历史 localPath 可能落在默认搜索范围之外（开发期写在源码目录 cache/media、
+    // 或旧安装目录），不纳入就会 404 裂图——文件明明在，只是不在被搜的目录里。
+    for (const it of store.cache.prompts || []) {
+      for (const key of ['image', 'video']) {
+        const lp = it[key] && it[key].localPath;
+        if (lp) dirs.push(path.dirname(lp));
+      }
+    }
+  }
   return Array.from(new Set(dirs));
 }
 function resolveMediaFile(name) {

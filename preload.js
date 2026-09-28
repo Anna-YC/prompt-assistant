@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   envCheck: () => ipcRenderer.invoke('env:check'),
   envInstallCli: () => ipcRenderer.invoke('env:installCli'),
   envLogin: () => ipcRenderer.invoke('env:login'),
+  copyAgentPrompt: (check) => ipcRenderer.invoke('env:agentPrompt', check),
   clearMediaCache: () => ipcRenderer.invoke('cache:clearMedia'),
   togglePin: (id) => ipcRenderer.invoke('pin:toggle', id),
   saveLocal: (item) => ipcRenderer.invoke('local:save', item),
@@ -39,7 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   // 事件
   on: (channel, fn) => {
     // 前缀白名单：避免漏登记单个通道导致消息被丢（曾因此出现把手缺块）
-    const ok = ['data:', 'sync:', 'panel:', 'stats:', 'appearance:'].some((p) => channel.startsWith(p));
+    const ok = ['data:', 'sync:', 'panel:', 'stats:', 'appearance:', 'env:'].some((p) => channel.startsWith(p));
     if (ok) ipcRenderer.on(channel, (_e, payload) => fn(payload));
   },
 });

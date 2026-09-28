@@ -4,6 +4,7 @@ const { app, BrowserWindow, Tray, Menu, MenuItem, ipcMain, clipboard, screen, sh
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 const { pathToFileURL } = require('url');
 const { Store } = require('./lib/store');
@@ -598,6 +599,203 @@ function ensureMedia({ tableId, recordId, fileToken, name, role }) {
   });
 }
 
+// ---------------- lark-cli 便携安装（免 npm / 免系统 Node） ----------------
+// lark-cli 的真身是官方发布的单文件原生程序（npmmirror / GitHub Releases 均有），
+// npm 包只是个下载器。因此一键配置直接下载 exe 即可运行，
+// 用户的电脑不需要装 Node、不需要 npm，也不依赖 GitHub 连通性（优先走 npmmirror）。
+const LARKCLI_MIRROR = 'https://registry.npmmirror.com';
+const LARKCLI_FALLBACK_VERSION = '1.0.96';
+
+function cliRuntimeDir() { return path.join(app.getPath('userData'), 'runtime', 'lark-cli'); }
+
+async function latestCliVersion() {
+  try {
+    const res = await fetch(`${LARKCLI_MIRROR}/@larksuite/cli/latest`);
+    const j = await res.json();
+    if (j && /^\d+\.\d+\.\d+$/.test(j.version || '')) return j.version;
+  } catch {}
+  return LARKCLI_FALLBACK_VERSION;
+}
+
+function cliArchiveName(ver) {
+  const p = { win32: 'windows', darwin: 'darwin', linux: 'linux' }[process.platform];
+  const a = { x64: 'amd64', arm64: 'arm64' }[process.arch];
+  if (!p || !a) throw new Error(`当前平台 ${process.platform}/${process.arch} 暂不支持自动安装`);
+  const ext = process.platform === 'win32' ? 'zip' : 'tar.gz';
+  return `lark-cli-${ver}-${p}-${a}.${ext}`;
+}
+
+async function downloadWithProgress(url, dest, onPct) {
+  const res = await fetch(url, { redirect: 'follow' });
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const total = +res.headers.get('content-length') || 0;
+  const reader = res.body.getReader();
+  const out = fs.createWriteStream(dest);
+  const streamError = new Promise((_, j) => out.once('error', j));
+  let got = 0;
+  try {
+    // 与写流错误赛跑：磁盘满/权限等错误要能终止等待，否则 promise 悬挂
+    await Promise.race([
+      (async () => {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!out.write(Buffer.from(value))) await new Promise((r) => out.once('drain', r));
+          got += value.length;
+          if (total && onPct) onPct(Math.min(99, Math.round((got / total) * 100)));
+        }
+        await new Promise((r) => out.end(r));
+      })(),
+      streamError,
+    ]);
+  } finally {
+    out.destroy();
+  }
+}
+
+async function expectedSha256(binBase, archiveName) {
+  try {
+    const res = await fetch(`${binBase}/checksums.txt`);
+    if (!res.ok) return null;
+    const line = (await res.text()).split(/\r?\n/).find((l) => l.includes(archiveName));
+    return line ? line.trim().split(/\s+/)[0].replace(/[^a-f0-9]/gi, '') : null;
+  } catch { return null; }
+}
+
+function extractArchive(archive, destDir) {
+  const { execFile } = require('child_process');
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(destDir, { recursive: true });
+    const done = (err, _so, se) => (err ? reject(new Error(String(se || err.message).slice(0, 200))) : resolve());
+    if (process.platform === 'win32') {
+      // Win10+ 自带 bsdtar（可直接解 zip）；老系统兜底 PowerShell Expand-Archive
+      const tarExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+      if (fs.existsSync(tarExe)) return void execFile(tarExe, ['-xf', archive, '-C', destDir], { windowsHide: true, timeout: 120000 }, done);
+      return void execFile(
+        'powershell.exe',
+        ['-NoProfile', '-Command', `Expand-Archive -LiteralPath ${JSON.stringify(archive)} -DestinationPath ${JSON.stringify(destDir)} -Force`],
+        { windowsHide: true, timeout: 180000 },
+        done
+      );
+    }
+    execFile('tar', ['-xf', archive, '-C', destDir], { timeout: 120000 }, done);
+  });
+}
+
+// 下载 → sha256 校验 → 解压 → 写入 larkCliPath → 验证可执行
+async function installCliPortable(onProgress) {
+  const say = (pct, msg) => { try { onProgress && onProgress(pct, msg); } catch {} };
+  say(0, '查询 lark-cli 最新版本…');
+  const ver = await latestCliVersion();
+  const archive = cliArchiveName(ver);
+  const dir = cliRuntimeDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = path.join(dir, archive);
+  const sources = [
+    `${LARKCLI_MIRROR}/-/binary/lark-cli/v${ver}`,
+    `https://github.com/larksuite/cli/releases/download/v${ver}`,
+  ];
+  let lastErr = null;
+  for (const base of sources) {
+    try {
+      say(1, `下载 lark-cli v${ver}（约 15MB）…`);
+      await downloadWithProgress(`${base}/${archive}`, tmp, (pct) => say(pct, `下载 lark-cli v${ver}… ${pct}%`));
+      const want = await expectedSha256(base, archive);
+      if (want) {
+        say(0, '校验文件完整性…');
+        const got = crypto.createHash('sha256').update(fs.readFileSync(tmp)).digest('hex');
+        if (got !== want.toLowerCase()) throw new Error('下载文件校验不一致，已中止');
+      }
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      try { fs.rmSync(tmp, { force: true }); } catch {}
+    }
+  }
+  if (lastErr) throw new Error('下载失败：' + String(lastErr.message || lastErr).slice(0, 200));
+  say(0, '解压安装…');
+  await extractArchive(tmp, dir);
+  try { fs.rmSync(tmp, { force: true }); } catch {}
+  const exe = path.join(dir, process.platform === 'win32' ? 'lark-cli.exe' : 'lark-cli');
+  if (!fs.existsSync(exe)) throw new Error('解压后未找到 lark-cli 可执行文件');
+  if (process.platform !== 'win32') { try { fs.chmodSync(exe, 0o755); } catch {} }
+  say(0, '验证运行…');
+  await new Promise((resolve, reject) => {
+    const { execFile } = require('child_process');
+    execFile(exe, ['--version'], { windowsHide: true, timeout: 20000 }, (err, _so, se) =>
+      err ? reject(new Error(String(se || err.message).slice(0, 200))) : resolve());
+  });
+  store.updateConfig({ larkCliPath: exe });
+  feishu.invalidateCliCache();
+  log('lark-cli portable installed:', exe);
+  return { ok: true, detail: `已安装 lark-cli v${ver}（免 Node 环境）` };
+}
+
+// 生成给本机 AI 助手（ZCode / Cursor 等）的排查指令：
+// 一键自动配置覆盖不了的机器（企业网、杀软、权限、损坏的安装…），
+// 把机器现状 + 修复步骤 + 登录引导打包成一段话，用户复制发给自己的 agent 即可。
+function buildAgentPrompt(check) {
+  const cfg = store.config;
+  const st = (k) => {
+    const it = check && check[k];
+    if (!it) return '（未检测）';
+    return (it.ok ? '正常' : '异常') + '：' + (it.detail || '');
+  };
+  let logTail = '（读取不到日志）';
+  try {
+    logTail = fs.readFileSync(logPath(), 'utf8').split('\n').slice(-25).join('\n').trim() || '（日志为空）';
+  } catch {}
+  const portableExe = path.join(cliRuntimeDir(), process.platform === 'win32' ? 'lark-cli.exe' : 'lark-cli');
+  const cfgFile = path.join(app.getPath('userData'), 'config.json');
+  const bt = '`'; // 模板里要输出 markdown 行内代码的反引号
+  return (
+`你是本机的 AI 运维助手，可以直接执行命令。我在用 Windows 桌面应用「提示词助手」（Electron 托盘工具），
+它通过本机的 lark-cli（飞书官方命令行）读取我自己的飞书多维表。现在它的环境自检没过，
+请帮我排查修复，并引导我完成飞书登录授权。
+
+【环境自检结果】（应用 v${app.getVersion()}，${os.type()} ${os.release()} ${process.arch}，身份 ${cfg.identity || 'user'}）
+- lark-cli：${st('cli')}
+- 飞书登录态：${st('auth')}
+- 多维表数据源：${st('base')}
+- 媒体缓存目录：${st('mediaDir')}
+
+【本机关键路径】
+- 应用目录：${app.getAppPath()}
+- 用户数据目录：${app.getPath('userData')}（里面有配置 config.json 和日志 app.log）
+- 当前 lark-cli 路径配置：${cfg.larkCliPath || '（默认：系统 PATH 里的 lark-cli.cmd）'}
+
+【应用日志尾部（最近 25 行）】
+${logTail}
+
+【请按顺序执行，每步失败先把完整报错贴出来分析，不要盲目重试】
+1. 诊断 lark-cli：运行 ${bt}lark-cli.cmd auth status${bt}（PATH 里没有就试上面配置的路径）。
+   - 输出 JSON 且无报错 → 直接跳到第 4 步。
+   - 提示"不是内部或外部命令"/"Failed to auto-install"/输出非 JSON 的错误堆栈 → 未安装或已损坏，走第 2 步。
+2. 安装或修复 lark-cli（优先方案 A，免 Node 免 npm）：
+   - 方案 A（官方单文件版，国内镜像）：
+     先 GET https://registry.npmmirror.com/@larksuite/cli/latest 拿最新版本号 V；
+     下载 https://registry.npmmirror.com/-/binary/lark-cli/v{V}/lark-cli-{V}-windows-amd64.zip；
+     用同目录 checksums.txt 里的官方 sha256 校验下载文件一致；
+     解压出 lark-cli.exe，放到 ${path.dirname(portableExe)} 目录下（不存在就新建）。
+   - 方案 B（本机已有 Node/npm 时）：${bt}npm install -g @larksuite/cli${bt}。
+3. 验证可用：运行 ${bt}<lark-cli路径> auth status${bt}，能输出 JSON 即修复成功。
+4. 登录飞书（device flow，浏览器里需要我本人点授权）：
+   a. 运行 ${bt}<lark-cli路径> auth login --no-wait --json --domain base,drive${bt}
+   b. 从返回 JSON 的 verification_url 字段拿到授权链接，用 ${bt}start "" "<链接>"${bt} 帮我打开浏览器，提醒我去点授权
+   c. 我完成授权后，运行 ${bt}<lark-cli路径> auth login --device-code <a 步返回里的 device_code> --json${bt} 完成登录
+   （device_code 十分钟内有效，过期就从 a 重来；本应用用 user 身份登录）
+5. 如果走的是方案 A，把 ${cfgFile} 里的 "larkCliPath" 改成 "${portableExe.split('\\').join('\\\\')}"
+   （改前先备份原文件；JSON 字符串里的反斜杠要双写）。
+6. 收尾：再运行一次 ${bt}<lark-cli路径> auth status${bt}，确认 identities.user.status 是 ready，
+   然后告诉我：回到应用 → 设置 → 数据源 → 环境自检 → 点「重新检查」。
+
+【约束】
+- 不要删除或修改用户数据目录里的其他文件（cache.json 是我已同步的提示词数据）。
+- 不要改应用目录下的任何程序文件。`
+  );
+}
+
 // ---------------- IPC ----------------
 function registerIpc() {
   const h = (ch, fn) => ipcMain.handle(ch, async (ev, ...args) => fn(...args));
@@ -640,6 +838,11 @@ function registerIpc() {
       if (/不是内部或外部命令|not recognized|ENOENT|找不到/i.test(msg)) {
         out.cli = { ok: false, detail: '未安装 lark-cli', action: 'install' };
         out.auth = { ok: false, detail: '需先安装 lark-cli' };
+      } else if (/Failed to auto-install|输出无法解析|Cannot find module|MODULE_NOT_FOUND|SyntaxError/i.test(msg)) {
+        // npm 包装上了但原生二进制缺失/损坏（常见于装的时候 GitHub 下不动）——
+        // 此时「去登录」调的也是这个坏 CLI，必须重装而不是引导登录
+        out.cli = { ok: false, detail: 'lark-cli 已损坏，需重装：' + msg.slice(0, 60), action: 'install' };
+        out.auth = { ok: false, detail: '需先修复 lark-cli' };
       } else {
         out.cli = { ok: true, detail: 'lark-cli 已安装' };
         out.auth = { ok: false, detail: '登录态异常：' + msg.slice(0, 80), action: 'login' };
@@ -669,25 +872,69 @@ function registerIpc() {
     return out;
   });
 
-  h('env:installCli', () => new Promise((resolve) => {
-    const { execFile } = require('child_process');
-    const cmd = process.platform === 'win32' ? 'npm install -g @larksuite/cli' : 'npm install -g @larksuite/cli';
-    execFile(
-      process.platform === 'win32' ? 'cmd.exe' : '/bin/sh',
-      process.platform === 'win32' ? ['/d', '/c', cmd] : ['-c', cmd],
-      { windowsHide: true, timeout: 600000, maxBuffer: 1024 * 1024 * 32 },
-      (err, stdout, stderr) => resolve({ ok: !err, detail: (stdout || '').slice(-300) + (err ? '\n' + String(stderr || err.message).slice(-300) : '') })
-    );
-  }));
+  let installPending = false;
+  h('env:installCli', async () => {
+    // 弹窗里「一键安装」和「一键自动配置」可能同时被点，两个下载写同一个临时文件会互踩
+    if (installPending) return { ok: false, detail: '正在安装中，请勿重复点击' };
+    installPending = true;
+    try {
+      return await installCliPortable((pct, msg) => {
+        if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('env:setupProgress', { pct, msg });
+      });
+    } catch (e) {
+      return { ok: false, detail: String(e.message || e).slice(-400) };
+    } finally {
+      installPending = false;
+    }
+  });
 
-  h('env:login', () => {
-    const { spawn } = require('child_process');
-    const cli = store.config.larkCliPath || (process.platform === 'win32' ? 'lark-cli.cmd' : 'lark-cli');
-    const child = process.platform === 'win32'
-      ? spawn('cmd.exe', ['/c', `"${cli}" auth login`], { detached: true, stdio: 'inherit', windowsHide: false })
-      : spawn(cli, ['auth', 'login'], { detached: true, stdio: 'inherit' });
-    child.unref();
-    return { ok: true, detail: '已打开登录窗口，请在浏览器/终端完成授权后重新检查' };
+  // 飞书登录：device flow —— 先 --no-wait 拿授权链接并直接打开浏览器，
+  // 再在后台用 --device-code 轮询完成；全程无需终端窗口（旧的 cmd 弹窗方式
+  // 因引号二次转义根本起不来，且 lark-cli 新版要求显式指定权限域）
+  // pendingLogin 记录进行中的授权：用户关掉授权页后再次点击时，
+  // 设备码 10 分钟内仍有效，直接重开同一链接即可，不会卡死在“授权进行中”。
+  let pendingLogin = null; // { id, url, startedAt }
+  h('env:login', async () => {
+    const cfg = store.config;
+    if (pendingLogin && Date.now() - pendingLogin.startedAt < 9 * 60 * 1000) {
+      shell.openExternal(pendingLogin.url);
+      return { ok: true, detail: '授权链接 10 分钟内有效，已重新打开授权页，完成授权后会自动确认' };
+    }
+    pendingLogin = null; // 上次流程已过期，旧轮询返回时凭 id 忽略
+    let d;
+    try {
+      d = await feishu.runCli(cfg, ['auth', 'login', '--no-wait', '--json', '--domain', 'base,drive'], { timeout: 30000 });
+    } catch (e) {
+      return { ok: false, detail: '发起登录失败：' + String(e.message || e).slice(0, 200) };
+    }
+    if (!d || !d.verification_url) return { ok: false, detail: '未拿到授权链接：' + JSON.stringify(d).slice(0, 160) };
+    const myId = Date.now();
+    pendingLogin = { id: myId, url: d.verification_url, startedAt: myId };
+    shell.openExternal(d.verification_url);
+    if (d.device_code) {
+      feishu.runCli(cfg, ['auth', 'login', '--device-code', d.device_code, '--json'], { timeout: 620000 })
+        .then(() => {
+          // 成功即登录态已写入，无论哪个流程完成的都通知（用户可能在旧页面上完成了授权）
+          pendingLogin = null;
+          if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('env:loginDone', { ok: true });
+        })
+        .catch((e) => {
+          // 失败只在仍是当前流程时才通知：旧流程过期返回时，用户可能正在新流程的授权页上，
+          // 此时弹“登录未完成”是误报
+          if (pendingLogin && pendingLogin.id === myId) {
+            pendingLogin = null;
+            if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('env:loginDone', { ok: false, detail: String(e.message || e).slice(0, 160) });
+          }
+        });
+    }
+    return { ok: true, detail: '已在浏览器打开飞书授权页，完成授权后会自动确认' };
+  });
+
+  h('env:agentPrompt', (checkResult) => {
+    const text = buildAgentPrompt(checkResult);
+    clipboard.writeText(text);
+    log('agent prompt copied, length:', text.length);
+    return { ok: true, len: text.length };
   });
 
   h('cache:clearMedia', () => {

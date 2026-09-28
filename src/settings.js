@@ -241,10 +241,12 @@ const ENV_LABELS = {
   base: '多维表数据源',
   mediaDir: '媒体缓存目录',
 };
+let lastEnvCheck = null; // 最近一次自检结果，供「复制给 AI 助手排查」使用
 async function runEnvCheck() {
   const rows = $('#envRows');
   rows.innerHTML = '<p class="hint">检测中…</p>';
   const r = await window.api.envCheck();
+  lastEnvCheck = r;
   const row = (key, item) => {
     const act = item.action
       ? `<button class="btn sm" data-act="${item.action}" data-key="${key}">${item.action === 'install' ? '一键安装' : item.action === 'login' ? '去登录' : '去配置'}</button>`
@@ -263,12 +265,20 @@ async function runEnvCheck() {
     const act = b.dataset.act;
     if (act === 'install') {
       b.textContent = '安装中…'; b.disabled = true;
-      const r2 = await window.api.envInstallCli();
-      flash($('#envMsg'), r2.ok ? '安装完成，请重新检查' : '安装失败：' + r2.detail.slice(-200), r2.ok ? 'ok' : 'err');
+      try {
+        const r2 = await window.api.envInstallCli();
+        setEnvMsg(r2.ok ? '安装完成，正在重新检查…' : '安装失败：' + r2.detail.slice(-160) + '。可点下方「复制给 AI 助手排查」，发给你电脑上的 AI 编程助手处理。', r2.ok ? 'ok' : 'err');
+      } catch (e2) {
+        setEnvMsg('安装出错：' + String(e2.message || e2).slice(0, 140) + '。可点「复制给 AI 助手排查」。', 'err');
+      }
       runEnvCheck();
     } else if (act === 'login') {
-      const r2 = await window.api.envLogin();
-      flash($('#envMsg'), r2.detail, 'ok');
+      try {
+        const r2 = await window.api.envLogin();
+        setEnvMsg(r2.detail + (r2.ok ? '' : '（若反复失败，点下方「复制给 AI 助手排查」）'), r2.ok ? 'ok' : 'err');
+      } catch (e2) {
+        setEnvMsg('发起登录失败：' + String(e2.message || e2).slice(0, 140) + '。可点「复制给 AI 助手排查」。', 'err');
+      }
     } else if (act === 'config') {
       $('#envDlg').classList.add('hidden');
       $$('.nav').forEach((x) => x.classList.toggle('on', x.dataset.tab === 'source'));
@@ -276,6 +286,69 @@ async function runEnvCheck() {
       $('#baseUrl').focus();
     }
   };
+  return r;
+}
+
+// 自动配置期间的状态提示不走 flash（4 秒自动清空会打断下载进度显示）
+function setEnvMsg(text, cls) {
+  const el = $('#envMsg');
+  el.textContent = text;
+  el.className = 'msg ' + (cls || '');
+}
+
+// 一键自动配置：装 lark-cli → 引导飞书登录 → 引导粘贴多维表链接
+let autoSetupRunning = false;
+async function runAutoSetup() {
+  if (autoSetupRunning) return;
+  autoSetupRunning = true;
+  const btn = $('#btnEnvAuto');
+  btn.disabled = true;
+  try {
+    setEnvMsg('正在检查环境…');
+    let r = await runEnvCheck();
+
+    // 1) lark-cli 缺失 → 便携安装（免 Node/npm，下载官方单文件 exe）
+    if (!r.cli.ok) {
+      setEnvMsg('开始自动安装 lark-cli…');
+      const ir = await window.api.envInstallCli();
+      if (!ir.ok) {
+        setEnvMsg('自动安装失败：' + ir.detail.slice(-160) + '。可检查网络后重试。', 'err');
+        return;
+      }
+      r = await runEnvCheck();
+      if (!r.cli.ok) { setEnvMsg('安装后仍未检测到 lark-cli，请点「重新检查」或重启应用。', 'err'); return; }
+    }
+
+    // 2) 未登录飞书 → 自动打开浏览器授权页（授权动作只能用户本人完成；
+    //    完成后主进程会通过 env:loginDone 通知这里自动确认，无需手动重新检查）
+    if (!r.auth.ok) {
+      const lr = await window.api.envLogin();
+      setEnvMsg(
+        lr.ok ? '已在浏览器打开飞书授权页，完成授权后会自动确认…'
+              : lr.detail + '。可点「复制给 AI 助手排查」，发给你电脑上的 AI 编程助手处理。',
+        lr.ok ? 'ok' : 'err'
+      );
+      return;
+    }
+
+    // 3) 未配置多维表 → 跳到数据源页让用户粘贴自己的链接（数据只有用户自己有）
+    if (!r.base.ok) {
+      $('#envDlg').classList.add('hidden');
+      $$('.nav').forEach((x) => x.classList.toggle('on', x.dataset.tab === 'source'));
+      $$('.tab').forEach((t) => t.classList.toggle('on', t.id === 'tab-source'));
+      $('#baseUrl').focus();
+      flash($('#testMsg'), '最后一步：粘贴你的多维表链接 → 点「解析」→「立即同步」', 'ok');
+      return;
+    }
+
+    setEnvMsg('环境已就绪，可以使用了。', 'ok');
+  } catch (e) {
+    // 任何意外都不能静默吞掉——用户对着没反应的按钮是最差的体验
+    setEnvMsg('自动配置出错：' + String(e.message || e).slice(0, 140) + '。可点「复制给 AI 助手排查」。', 'err');
+  } finally {
+    autoSetupRunning = false;
+    btn.disabled = false;
+  }
 }
 
 // ---------------- 弹窗 ----------------
@@ -402,6 +475,24 @@ function bind() {
     $('#envDlg').classList.remove('hidden');
     runEnvCheck();
   });
+  $('#btnEnvAuto').addEventListener('click', runAutoSetup);
+  $('#btnEnvAgent').addEventListener('click', async () => {
+    const btn = $('#btnEnvAgent');
+    btn.disabled = true;
+    try {
+      if (!lastEnvCheck) await runEnvCheck();
+      const r = await window.api.copyAgentPrompt(lastEnvCheck);
+      setEnvMsg(
+        r.ok ? `已复制（${r.len} 字）。打开你电脑上的 AI 编程助手（ZCode / Cursor 等），粘贴发送——它会按你机器的实际缺失自动修复环境并引导你登录。`
+             : '复制失败，请重试',
+        r.ok ? 'ok' : 'err'
+      );
+    } catch (e) {
+      setEnvMsg('生成失败：' + String(e.message || e).slice(0, 120), 'err');
+    } finally {
+      btn.disabled = false;
+    }
+  });
   $('#btnGuideDoc').addEventListener('click', () => {
     window.api.openExternal('https://zk5ckzju3h.feishu.cn/docx/BIxhdJC0GoOvr3xHtDlcztIqnRd?from=from_copylink');
   });
@@ -410,6 +501,16 @@ function bind() {
   $('#launchAtLogin').addEventListener('change', (e) => look({ behavior: { ...cfg.behavior, launchAtLogin: e.target.checked } }));
 
   window.api.on('data:updated', (p) => { view = p.view; meta = p.meta; renderPrompts(); renderPhrases(); renderSyncInfo(); });
+  window.api.on('env:setupProgress', (p) => setEnvMsg(p.msg || ''));
+  window.api.on('env:loginDone', async (p) => {
+    if (p.ok) {
+      setEnvMsg('授权完成，正在确认登录态…', 'ok');
+      await runEnvCheck();
+      setEnvMsg('飞书登录成功。', 'ok');
+    } else {
+      setEnvMsg('登录未完成：' + (p.detail || '已取消或超时，可重新点击去登录'), 'err');
+    }
+  });
   window.api.on('stats:updated', async () => {
     const d = await window.api.getData();
     view = d.view; meta = d.meta;

@@ -17,6 +17,7 @@ let collapseTimer = null;
 let dragging = null;
 let handleHover = false;
 let dwellTimer = null;
+let hoverReopenAfter = 0; // 收起冷却：窗口刚缩回把手时若恰在鼠标下方， dwell 不得立即重新展开（否则“收起→又弹出”死循环）
 let lbItem = null;
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -389,6 +390,7 @@ function bind() {
     if (dwellTimer) clearTimeout(dwellTimer);
     dwellTimer = setTimeout(() => {
       dwellTimer = null;
+      if (Date.now() < hoverReopenAfter) return; // 收起冷却期内，窗口缩到鼠标下方不算悬停意图
       if (handleHover && !ctrlDown && !expanded && !dragging && cfg && cfg.panel && cfg.panel.hoverExpand !== false) requestExpand(false);
     }, 200);
   };
@@ -518,7 +520,7 @@ function bind() {
 
   // 主进程事件
   window.api.on('panel:expand', (p) => { body.classList.remove('preexpand'); setExpandedLocal(true, !!(p && p.sticky)); });
-  window.api.on('panel:collapse', () => { body.classList.remove('panelhide'); setExpandedLocal(false, false); setHandleVisual('pos'); });
+  window.api.on('panel:collapse', () => { body.classList.remove('panelhide'); setExpandedLocal(false, false); setHandleVisual('pos'); hoverReopenAfter = Date.now() + 700; });
   window.api.on('panel:handle-on', () => { body.classList.remove('handle-hide'); setHandleVisual('fill'); });
   window.api.on('panel:drag-on', () => setHandleVisual('pos', currentFrac()));
   window.api.on('panel:drag-pos', (p) => setHandleVisual('pos', p && typeof p.frac === 'number' ? p.frac : currentFrac()));
@@ -529,6 +531,7 @@ function bind() {
     body.classList.remove('preexpand', 'panelhide', 'handle-hide');
     setExpandedLocal(false, false);
     setHandleVisual('fill');
+    hoverReopenAfter = Date.now() + 700; // 拖拽落点即把手位置，松手瞬间不算悬停展开意图
     requestAnimationFrame(() => requestAnimationFrame(() => body.classList.remove('noanim')));
   });
   window.api.on('panel:handle-pos', (p) => setHandleVisual('pos', p && typeof p.frac === 'number' ? p.frac : currentFrac()));

@@ -19,6 +19,7 @@ let syncing = false;
 let panelExpanded = false;
 let panelSticky = false; // 托盘左键打开时为“固定展开”，不随鼠标离开收回
 let ctrlHover = false; // panel:ctrlHover 上报的 Ctrl 悬停状态（当前仅记录未消费；需先声明，strict 模式下直接赋值会抛错）
+const procStartedAt = Date.now(); // 进程启动时刻：second-instance 据此区分“重复自启项”与“用户手动再开”
 
 const isDev = !app.isPackaged;
 
@@ -296,13 +297,36 @@ function copyText(text, label, id) {
 
 // 开机自启：路径/参数必须自带引号（Electron 写注册表不加引号，含空格路径会被截断导致开机启动失败）
 function applyLoginItem() {
+  // 开发模式绝不碰注册表自启：dev 写的是 node_modules 里的 electron.exe（值名 electron.app.Electron），
+  // 与安装版条目（electron.app.提示词助手）并存时开机起两个实例——单实例锁按 userData 区分，
+  // 拦不住不同形态，两个把手叠在屏幕边缘互相“复活”面板，表现成永远关不掉。
+  if (isDev) return;
   const on = !!(store.config.behavior && store.config.behavior.launchAtLogin);
   const q = (p) => `"${p}"`;
   app.setLoginItemSettings({
     openAtLogin: on,
     path: q(process.execPath),
-    args: isDev ? [q(path.resolve(__dirname))] : [],
+    args: [],
   });
+  cleanupDuplicateLoginItems();
+}
+
+// 清理历史 dev 调试留下的自启残留（值名固定，指向 node_modules 里的 electron.exe）。
+// 逐值名校验数据指向本项目的 dev 形态后才删，避免误伤其他 Electron 应用的同名条目。
+function cleanupDuplicateLoginItems() {
+  if (process.platform !== 'win32') return;
+  const { execFile } = require('child_process');
+  const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  for (const name of ['electron.app.Electron', 'electron.app.prompt-assistant']) {
+    const read = `[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-ItemProperty -Path '${RUN_KEY}' -Name '${name}' -ErrorAction SilentlyContinue).'${name}'`;
+    execFile('powershell.exe', ['-NoProfile', '-Command', read], { windowsHide: true, timeout: 15000 }, (err, stdout) => {
+      const data = String(stdout || '').trim();
+      if (err || !data) return; // 条目不存在
+      if (!/node_modules/i.test(data) || !/提示词助手|prompt-assistant/i.test(data)) return; // 不是本项目的 dev 残留
+      log('remove stale dev login item:', name, '=>', data.slice(0, 140));
+      execFile('powershell.exe', ['-NoProfile', '-Command', `Remove-ItemProperty -Path '${RUN_KEY}' -Name '${name}' -Force`], { windowsHide: true, timeout: 15000 }, () => {});
+    });
+  }
 }
 
 // ---------------- 同步 ----------------
@@ -1039,8 +1063,18 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => togglePanel());
+  app.on('second-instance', () => {
+    // 启动初期收到的 second-instance 多半是重复的开机自启项（注册表 + 启动文件夹双写、
+    // 历史残留），此时唤出面板 = 开机自弹，正是用户投诉的“开机就弹出来”。
+    // 20s 窗口期过后才按“用户手动双击图标想唤出面板”处理。
+    if (Date.now() - procStartedAt < 20000) {
+      log('second-instance ignored (startup window) — 请检查是否存在重复的开机自启项');
+      return;
+    }
+    togglePanel();
+  });
   app.whenReady().then(async () => {
+    log('app start, version', app.getVersion(), ', pid', process.pid, ', exe', process.execPath);
     store = new Store(app.getPath('userData'));
     registerLocalProtocol();
     registerIpc();

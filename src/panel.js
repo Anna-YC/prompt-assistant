@@ -375,10 +375,12 @@ function bind() {
     if (expanded && !sticky && !lightboxOpen() && !dragging) scheduleCollapse();
   });
 
-  // 把手悬停停留展开（Ctrl 抑制：以 mousemove 跟踪的 Ctrl 状态为准，enter 事件的 ctrlKey 不可靠）
+  // 把手悬停停留展开（修饰键抑制：以 mousemove 跟踪的状态为准，enter 事件的按键属性不可靠；
+  // Windows 认 Ctrl，mac 认 Cmd——按住时移过把手不弹面板，方便抄屏幕右侧的内容）
+  const isMac = /Mac/i.test(navigator.platform);
   let ctrlDown = false;
   window.addEventListener('mousemove', (e) => {
-    const c = !!e.ctrlKey;
+    const c = !!(e.ctrlKey || (isMac && e.metaKey));
     if (c !== ctrlDown) {
       ctrlDown = c;
       if (c && dwellTimer) { clearTimeout(dwellTimer); dwellTimer = null; }

@@ -1,8 +1,19 @@
 # 提示词助手
 
-常驻系统托盘（Windows）/ 菜单栏（macOS）的提示词速查 / 一键复制工具。数据来自使用者自己的飞书多维表
-（首次使用在 设置 → 数据源 粘贴多维表链接即可），
-无需任何密钥配置——直接复用本机已登录的 `lark-cli` 身份读取多维表。
+[![Release](https://img.shields.io/github/v/release/Anna-YC/prompt-assistant?label=%E5%8F%91%E5%B8%83)](https://github.com/Anna-YC/prompt-assistant/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%F0%9F%8D%8E%20%7C%20Windows%20%F0%9F%AA%9F-lightgrey)](https://github.com/Anna-YC/prompt-assistant/releases/latest)
+[![Electron](https://img.shields.io/badge/Electron-33-9feaf9?logo=electron&logoColor=blue)](https://www.electronjs.org/)
+
+**常驻系统托盘的提示词速查 / 一键复制工具**：数据来自你自己的飞书多维表，
+配合浏览器剪藏插件实现「网页上看到 → 一键剪藏 → 托盘随手取用」的闭环，无需任何密钥配置——
+直接复用本机已登录的 `lark-cli` 身份读取多维表。
+
+| 吸附面板速查 | 设置 · 数据源 | 设置 · 提示词 |
+| :---: | :---: | :---: |
+| ![吸附面板](docs/screenshots/panel.png) | ![数据源设置](docs/screenshots/settings-source.png) | ![提示词列表](docs/screenshots/settings-prompts.png) |
+
+> 截图为 macOS 实机运行效果：屏幕右缘悬浮把手悬停展开、卡片带封面图与两级分类（常用词 / 生图词 / 视频词）、点击即复制全文。
 
 ## 下载安装
 
@@ -133,6 +144,31 @@ npm start                # 开发运行（--enable-logging 可看渲染进程日
 
 常用句与本地提示词保存在 `%AppData%\提示词助手\config.json` 的 `local` 节点；
 托盘菜单「常用」= 打了 ★ 的条目，未打星时自动取前 14 条。
+
+## 开源说明
+
+本项目基于 [EConG37/prompt-assistant](https://github.com/EConG37/prompt-assistant)（MIT License），
+在其 Windows 版基础上完成了 macOS / Apple Silicon 适配并持续维护，**所有平台改动均已保持 Windows 行为不变**，欢迎向上游回馈 PR。
+
+- **许可证**：MIT —— 可自由使用、修改、分发，保留版权声明即可（见 [LICENSE](LICENSE)）
+- **数据主权**：本工具不内置任何云端依赖与个人数据；你的提示词只存在你自己的飞书多维表与本机缓存里
+- **欢迎贡献**：
+  - 问题反馈 / 功能建议：[提 Issue](https://github.com/Anna-YC/prompt-assistant/issues)
+  - 代码贡献：Fork → 修改 → PR（中文说明即可）
+- **本地开发**：
+
+  ```bash
+  git clone https://github.com/Anna-YC/prompt-assistant.git
+  cd prompt-assistant
+  npm install
+  npm start            # 开发运行（Windows 也可双击 启动提示词助手.vbs / mac 双击 .command）
+  npm run dist:mac     # 打 macOS dmg（arm64）
+  npm run dist:win     # 打 Windows nsis 安装包
+  ```
+
+- **Mac 适配要点**（对二次开发有兴趣的同学）：菜单栏模板图标（深浅色自适应）、`LSUIElement` 代理应用不占 Dock、
+  GUI 受限 PATH 下自动探测 lark-cli（Homebrew / npm 用户目录）并注入增强 PATH、登录项自启走 AppleScript、
+  应用图标 1024px 自动转 icns。
 
 ## 许可证
 

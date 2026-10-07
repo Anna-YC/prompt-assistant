@@ -17,12 +17,16 @@
 
 ## 下载安装
 
-- **Windows**：[GitHub Releases](https://github.com/EConG37/prompt-assistant/releases/latest)
-  下载最新的 `Setup.x.y.z.exe`，双击安装；
-- **macOS（Apple Silicon）**：Releases 下载 `提示词助手-x.y.z-mac-arm64.dmg`，打开后把「提示词助手」拖入「应用程序」。
-  首次打开若提示「无法验证开发者」：右键点 .app →「打开」→ 再点「打开」即可（本地构建未做开发者证书签名）。
+到 [GitHub Releases](https://github.com/Anna-YC/prompt-assistant/releases/latest) 下载对应平台的安装包：
 
-安装后打开 设置 → 数据源 → 环境自检 →「一键自动配置」即可完成环境准备（Mac 会自动下载 darwin-arm64 版 lark-cli）。
+| 平台 | 文件 | 安装方式 |
+| --- | --- | --- |
+| **macOS**（Apple Silicon） | `PromptAssistant-x.y.z-mac-arm64.dmg` | 打开 dmg，把「提示词助手」拖入「应用程序」。首次打开若提示「无法验证开发者」：右键 .app →「打开」→ 再点「打开」（本地构建未做公证） |
+| **Windows** x64 | `PromptAssistant-Setup-x.y.z.exe` | 双击运行安装向导，支持自定义安装目录 |
+
+安装后打开 设置 → 数据源 → 环境自检 →「一键自动配置」即可完成环境准备
+（自动下载安装 lark-cli：mac 为 darwin-arm64 版、Windows 为 win-x64 版，均走国内镜像并做 sha256 校验；
+无需安装 Node/npm）。
 
 ## 工作流：剪藏插件（存） × 提示词助手（用）
 
